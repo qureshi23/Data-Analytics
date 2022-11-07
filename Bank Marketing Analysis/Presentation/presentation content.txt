@@ -1,0 +1,56 @@
+Conversion Rate by Age:
+
+As we can see on the plot, 60+ age people responded better to the bank marketing campaign compared to the other age groups.
+
+
+Conversions by age group and marital status
+
+In the groups from 30 to 70+ age, married people are more likely to convert (could be because they are the majority in these age groups). People with the "single" marital status convert better in the age group {20, 30].
+
+Conversions by job
+
+Students and retired people have a higher conversion rate than other "job" groups. The blue-collar group has the lowest conversion rate.
+
+
+Conversions by education
+
+The highest conversion rate in the "illiterate" group. But because there are only 18 illiterate clients, I am not going to recommend focusing on this group. "University degree" has a higher than average conversion rate, so I would suggest focusing on this group. Also, I would recommend limit marketing efforts on groups "basic.6y" and "basic.9y".
+
+
+Conversions by having or not a credit in default
+
+So if a client doesn't have a credit, the one is more likely to subscribe to a term deposit.
+
+
+Conversions by having a housing loan and a personal loan
+
+Clients who have a housing loan or don't have a personal loan convert slightly better.
+
+
+Conversions by the last contact month of a year
+
+People who were contacted last time in March, December, September, and October convert much better than others.
+
+
+Conversions by the last contact day of a week
+
+The conversion rate is higher if the clients were contacted on Thursday, Tuesday, and Wednesday.
+
+
+Conversions by the outcome of the previous campaign
+
+Obviously, if the previous campaign outcome was successful (the bank probably earned some loyalty), this campaign converted better as well.
+
+
+Summarizing recommendations for the bank
+
+During the Bank Marketing Campaigns Dataset analysis, I found some interesting insights that can be used for improving a similar marketing campaign, launching new campaigns, and addressing the Bank's marketing strategy.
+
+
+Recommendations for the Sales Department (Call Center)
+
+Always contact clients by cellphone when possible
+Perform most calls (campaigns) during these months: March, December, September, and October
+Plan most calls to clients on Thursday, Tuesday, Wednesday
+Long phone conversations perform better, so try to keep a conversation going as much as you can
+18 is probably the max number of calls to a single client during a campaign
