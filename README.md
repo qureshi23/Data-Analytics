@@ -1,2 +1,2 @@
-# Data-Analytics
-I have completed differenet case studies as a Data analyst. I have worked on the restaurant, brain stroke, bank marketing dataset and analyzed many business queries of restaurants, brain stroke, bank marketing written on MySQL, and R and then create a dashboard on Tableau for visualization of my analysis.
+# Portfolio: 
+Data Analyst and Scientist with diverse case studies. Explored restaurant, brain stroke, and bank marketing data using MySQL and R. Crafted PowerBI, and Tableau dashboards for insightful visualizations. Python-driven Data Science and ML projects encompass analysis, visualization, and trained models.
