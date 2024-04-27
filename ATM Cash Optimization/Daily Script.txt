@@ -1,0 +1,1425 @@
+import kfp
+
+from kfp import dsl
+
+from kfp.components import func_to_container_op, InputPath, OutputPath, create_component_from_func
+
+from kfp.v2.dsl import component, Input, Output, Artifact, Dataset
+
+ 
+
+ 
+
+def can_process_atm_data(local_base_path: str) -> int:
+
+   import pandas as pd
+
+    import teradatasql
+
+   
+
+    config_df=pd.read_csv(local_base_path + "/DA_FF_UC_ATM_CSH_CONFIG_FILE.csv", header=None, sep=',')
+
+ 
+
+    config_dict = {}
+
+    for i in range(len(config_df)):
+
+#         print(config_df)
+
+        config_dict[str(config_df.loc[i,0]).strip()] = str(config_df.loc[i,1]).strip() ## CHANGED
+
+ 
+
+ 
+
+    # Loading variable
+
+    host = str(config_dict['host'])
+
+    username = str(config_dict['username'])
+
+    password = str(config_dict['password'])
+
+   
+
+    
+
+    password = r'ENCRYPTED_PASSWORD(file:/etc/security/password/pass_key.properties,file:/etc/security/password/enc_pass.properties)'
+
+   
+
+ 
+
+    query = '''
+
+    SELECT
+
+    BUSINESS_DATE,
+
+    CASE
+
+    WHEN WORKFLOW_STATE = '10' THEN 'FAILED'
+
+    WHEN WORKFLOW_STATE= '1' THEN 'RUNNING'
+
+    WHEN WORKFLOW_STATE= '0' THEN 'NOT STARTED'
+
+    WHEN WORKFLOW_STATE = '99' THEN 'SUCCESSFULLY COMPLETED'
+
+    ELSE NULL
+
+    END AS FLAG
+
+    FROM dp_mtdt.CFR_WORKFLOW_ID
+
+    WHERE WORKFLOW_NAME = 'WF_DLY_DW_SDM_DS_ATM_CSH_OPT'
+
+    AND BUSINESS_DATE = CURRENT_DATE - 1'''
+
+   
+
+ 
+
+    try:
+
+        with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+            is_data_loaded = pd.read_sql(query,conn)
+
+            is_data_processed = pd.read_sql('SEL COUNT(*) "ROW_COUNT" FROM DP_ADMT.UC_CSH_OPT_ATM_PRESC_DETAIL WHERE DATE_ENTERED = CURRENT_DATE', conn)
+
+ 
+
+        if (len(is_data_loaded) > 0 and is_data_loaded['FLAG'][0] == 'SUCCESSFULLY COMPLETED') and \
+
+                (len(is_data_processed) > 0 and is_data_processed['ROW_COUNT'][0] == 0):
+
+            print("True")
+
+            return 1
+
+        else:
+
+            print("False")
+
+            return 0
+
+    except Exception as e:
+
+        print(e)
+
+        return -1
+
+ 
+
+# is_eligible_to_execute_op = create_component_from_func(can_process_atm_data, base_image='docker.io/ubl_dat_fdn/atm_csh_opt:v1.0')
+
+is_eligible_to_execute_op = create_component_from_func(can_process_atm_data, base_image='pkplpadsm01.ubl.com.pk:30500/ubl-dat-fdn/atm-csh-opt:1.0')
+
+ 
+
+def process_atms(local_base_path: str):
+
+    print('Processing ATMs...')
+
+    import teradatasql
+
+ 
+
+    # Predictions
+
+ 
+
+    from sklearn.datasets import load_boston
+
+    import teradatasql
+
+    from sklearn.linear_model import ElasticNet,ElasticNetCV
+
+    from sklearn.metrics import mean_squared_error
+
+    import sklearn.metrics as mm
+
+    from sklearn.model_selection import train_test_split
+
+    import numpy as np
+
+    import pandas as pd
+
+    from sklearn.model_selection import GridSearchCV
+
+    from sklearn.model_selection import RepeatedKFold
+
+    from numpy import arange
+
+    import json
+
+    from datetime import date,timedelta
+
+    from datetime import datetime
+
+    import sys
+
+ 
+
+    import logging
+
+    import time
+
+ 
+
+    import warnings
+
+    warnings.filterwarnings('ignore')
+
+   
+
+        ### READ FILE FROM HERE...
+
+    config_df=pd.read_csv(local_base_path + "/DA_FF_UC_ATM_CSH_CONFIG_FILE.csv", header=None, sep=',')
+
+ 
+
+    config_dict = {}
+
+    for i in range(len(config_df)):
+
+        config_dict[str(config_df.loc[i,0]).strip()] = str(config_df.loc[i,1]).strip()
+
+ 
+
+ 
+
+    # Loading variable
+
+    host = str(config_dict['host'])
+
+    username = str(config_dict['username'])
+
+    password = str(config_dict['password'])
+
+    schema_TD = str(config_dict['schema_TD'])
+
+    wd_TD = str(config_dict['wd_TD'])
+
+    atm_detail_TD = str(config_dict['atm_detail_TD'])
+
+    rep_TD = str(config_dict['rep_TD'])
+
+    close_bal_TD = str(config_dict['close_bal_TD'])
+
+    param_TD = 'uc_csh_opt_pred_parameters'  #str(config_dict['param_TD'])
+
+    margins_TD = 'uc_csh_opt_pred_margins'  #str(config_dict['margins_TD'])
+
+    limit_TD = str(config_dict['limit_TD'])
+
+    down_time_TD = str(config_dict['down_time_TD'])
+
+    atm_master_TD = str(config_dict['atm_master_TD'])
+
+    final_result_TD = ' uc_csh_opt_atm_presc_detail'  #str(config_dict['final_result_TD'])
+
+    atm_list_TD = 'UC_CSH_OPT_ATM_MASTER' #str(config_dict['atm_list_TD'])
+
+    logs_TD = ' uc_csh_opt_atm_logs'  #str(config_dict['logs_TD'])
+
+    date_matrix_TD = str(config_dict['date_matrix_TD'])
+
+    days_of_prediction = str(config_dict['days_of_prediction'])
+
+    start_train_date = str(config_dict['start_train_date'])
+
+    batch_no = str(config_dict['batch_no'])
+
+    bi1_TD = ' uc_csh_opt_atm_automate_batch_no'  #str(config_dict['bi1_TD'])
+
+    schema_SBX = 'dp_sbx'
+
+    bus_margins_TD = 'uc_csh_opt_bus_margins'
+
+    
+
+    password = r'ENCRYPTED_PASSWORD(file:/etc/security/password/pass_key.properties,file:/etc/security/password/enc_pass.properties)'
+
+   
+
+    print('Output Tables: ', final_result_TD, ' - ', bi1_TD, ' - ', logs_TD)
+
+   
+
+    
+
+    index = -1
+
+    date_matrix = ''
+
+   
+
+    try:
+
+        startTime1 = datetime.now()
+
+        print('Execution Time:', startTime1)
+
+        FINAL_RESULT=pd.DataFrame()
+
+        FINAL_PARAM = pd.DataFrame()
+
+        PRED_RESULT = pd.DataFrame()
+
+        train_fault = list()
+
+        test_fault = list()
+
+        test_fault_dt = list()
+
+ 
+
+        batch_no = batch_no
+
+        mode = 'PROD'
+
+ 
+
+        #For test
+
+        # current_date = '2021-07-04'
+
+        # current_date=pd.to_datetime(current_date)
+
+ 
+
+        #For live
+
+        current_date = date.today()
+
+        current_date_day = current_date.day
+
+ 
+
+ 
+
+        current_minus_one  = current_date - timedelta(days =1)
+
+ 
+
+        start_train_date = start_train_date
+
+        #start_train_date = '2020-10-01'
+
+ 
+
+        end_date = current_date + timedelta(days =int(days_of_prediction))
+
+ 
+
+        #atm_list_40 = (2408,            1569,     4232,     2601,     1410,     697,       881,       3497,     4453,               4793,     499,       2055,     268,       388,       8674,     8733,     1948,     4579,     616,       1574,               177,       3,            1414,     245,       413,       1529,     2962,     3481,     5179,     14,         454,               82,         1879,     398,       256,       7748,     377,       6023)
+
+ 
+
+        try:
+
+ 
+
+            # Act wd table
+
+            wd = '''select atm_id,txn_date,total_amt from {}.{} where cast(atm_id as int) in (select atm_id from {}.{}) order by atm_id,txn_date desc'''.format(schema_TD ,wd_TD,schema_TD,atm_list_TD)
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                main = pd.read_sql(wd,conn)
+
+            main['atm_id'] = main['atm_id'].astype(int)
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Successfully Read data from " + schema_TD + "." + wd_TD + " and " + atm_list_TD) )
+
+ 
+
+            index = index+1
+
+ 
+
+            # date matrix table
+
+            date_matrix = '''select * from {}.{}'''.format(schema_TD,date_matrix_TD)
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                date_matrix = pd.read_sql(date_matrix,conn)
+
+ 
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Successfully Read data from " + schema_TD + "." + date_matrix_TD) )
+
+#                 index = index+1
+
+ 
+
+            # param table
+
+            param = '''select * from {}.{} where atm_id in (select atm_id from {}.{}) order by atm_id,"date" desc'''.format(schema_TD,param_TD ,schema_TD,atm_list_TD)
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                param = pd.read_sql(param,conn)
+
+            param.drop_duplicates(subset = ['ATM_ID'],inplace = True)
+
+            param=param.reset_index(drop = True)
+
+ 
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Successfully Read data from " + schema_TD + "." + date_matrix_TD) )
+
+#                 index = index+1
+
+ 
+
+        except Exception as e:
+
+            print(e)
+
+#                 logger.info('{} - {}'.format(index, "Failed to read data from " + wd_TD + " " + date_matrix_TD + " " + param_TD) )
+
+#                 index = index+1
+
+ 
+
+        date_matrix  = date_matrix.rename({ 'gregorian_date': 'txn_date'},axis=1)
+
+ 
+
+        date_matrix = date_matrix[['txn_date', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday',
+
+               'saturday', 'sunday', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8',
+
+               'd9', 'd10', 'd11', 'd12', 'd13', 'd14', 'd15', 'd16', 'd17', 'd18',
+
+               'd19', 'd20', 'd21', 'd22', 'd23', 'd24', 'd25', 'd26', 'd27', 'd28',
+
+               'd29', 'd30', 'd31', 'public_holiday', 'bank_holiday', 'weekend',
+
+               'first5days', 'last5days', 'first6to10days', 'last6to10days', 'january',
+
+               'february', 'march', 'april', 'may', 'june', 'july', 'august',
+
+               'september', 'october', 'november', 'december', 'labour_day',
+
+               'new_years_day', 'new_years_eve', 'day_before_eid_ul_fitr',
+
+               'eid_ul_fitr', 'eid_ul_azha', 'day_before_eid_ul_azha', 'kashmir_day',
+
+               'pakistan_day', 'shab_e_meraj', 'shab_e_barat', 'independence_day',
+
+               'defence_day', 'first_day_of_ashura', 'second_day_of_ashura', 'chelum',
+
+               'iqbal_day', 'eid_milad_un_nabi', 'christmas_eve', 'quaid_e_azam_day',
+
+               'day_after_christmas', 'ramdhan', 'pre_ramadhan', 'first_ramdhan',
+
+               'day_after_eid_ul_azha', 'weekofyear']]
+
+ 
+
+        date_matrix.sort_values('txn_date',inplace = True)
+
+ 
+
+        main.sort_values('txn_date',inplace = True)
+
+ 
+
+        uni_atm =pd.DataFrame(pd.unique(main['atm_id']))
+
+ 
+
+        main['txn_date']= pd.to_datetime(main['txn_date'])
+
+        date_matrix['txn_date']= pd.to_datetime(date_matrix['txn_date'])
+
+        main['atm_id']= main['atm_id'].astype(int)
+
+ 
+
+ 
+
+        dates = [str(current_date)[:10]]
+
+        #     dates = ['2021-08-31']
+
+ 
+
+        main.drop_duplicates(inplace = True)
+
+ 
+
+        main= main.sort_values(['atm_id','txn_date'],ascending=(True,True))
+
+ 
+
+        main=main.reset_index(drop = True)
+
+ 
+
+        for j in range(len(dates)):
+
+        #for j in range(1):
+
+            print(dates[j])
+
+            for i in range(len(uni_atm)): # change here
+
+#             for i in range(5):
+
+ 
+
+                atm_data_raw = pd.DataFrame.merge(uni_atm[i:i+1],main, left_on = 0, right_on = 'atm_id',how = 'inner')
+
+                atm_data_raw.sort_values('txn_date',inplace = True)
+
+                atm_data_raw = atm_data_raw.reset_index(drop = True)
+
+                atm_data=atm_data_raw.loc[(atm_data_raw['txn_date'] > start_train_date) & (atm_data_raw['txn_date'] < str(current_date))].reset_index(drop = True)
+
+                atm_data_score=date_matrix.loc[(date_matrix['txn_date'] >= str(current_date)) & (date_matrix['txn_date'] < str(end_date))].reset_index(drop = True)
+
+                atm_data_score=atm_data_score[['txn_date']]
+
+ 
+
+                if len(atm_data_raw) == 0:
+
+                    train_fault.append(atm_id)
+
+                    print(str(atm_id)+' rejected no data')
+
+                    #print(txn_date)
+
+                    print('----------------------')
+
+                    continue;
+
+ 
+
+                atm_id=atm_data_raw['atm_id'][0]
+
+                atm_data_score['atm_id'] = atm_id
+
+                atm_data_score['total_amt'] = 0
+
+                atm_data_score[0] = atm_id
+
+ 
+
+ 
+
+                if len(atm_data) == 0:
+
+                    train_fault.append(atm_id)
+
+                    print(str(atm_id)+' rejected no traning')
+
+                    #print(txn_date)
+
+                    print('----------------------')
+
+                    continue;
+
+ 
+
+                start_train = start_train_date
+
+                end_train = current_date
+
+                print('Analysis for ATM '+str(atm_id)+' number '+str(i))
+
+                print('preparing dataset')
+
+ 
+
+ 
+
+                print('merger with date matrix')
+
+                data_train = pd.DataFrame.merge(date_matrix,atm_data, left_on = 'txn_date', right_on = 'txn_date',how = 'right')    
+
+                data_test = pd.DataFrame.merge(date_matrix,atm_data_score, left_on = 'txn_date', right_on = 'txn_date',how = 'right')  
+
+ 
+
+                data_train.drop(['atm_id'],inplace= True,axis = 1)
+
+                data_test.drop(['atm_id'],inplace= True,axis = 1)
+
+ 
+
+                model = ElasticNet()
+
+ 
+
+                X = data_train.loc[:,data_train.columns != 'total_amt']
+
+                X = X.loc[:,X.columns != 'txn_date']
+
+                y = data_train[['total_amt']]
+
+ 
+
+                # Fetching paramters from cross validation
+
+                alpa=param.loc[param['ATM_ID']== atm_data_raw['atm_id'][0]].reset_index(drop = True)['ALPHA'][0] if (param.loc[param['ATM_ID']== atm_data_raw['atm_id'][0]].reset_index(drop = True).shape[0]) > 0 else 1.0
+
+                l1=param.loc[param['ATM_ID']== atm_data_raw['atm_id'][0]].reset_index(drop = True)['L1_RATIO'][0] if (param.loc[param['ATM_ID']== atm_data_raw['atm_id'][0]].reset_index(drop = True).shape[0]) > 0 else 0.71
+
+ 
+
+                if (alpa == 'no') or (l1 == 'no'):
+
+                    print('no value in the older training')
+
+                    print('------------------------------')
+
+                    continue
+
+ 
+
+                 # define model
+
+                model = ElasticNet(alpha=alpa, l1_ratio=l1)
+
+ 
+
+                model.fit(X, y)
+
+ 
+
+                #data_test = data_test.loc[:,data_test.columns != 'withdrawal']
+
+                result = pd.DataFrame(data_test['txn_date'])
+
+                #print(result)
+
+                data_test = data_test.loc[:,data_test.columns != 'txn_date']
+
+                data_test = data_test.loc[:,data_test.columns != 'total_amt']
+
+                data_test = data_test.loc[:,data_test.columns != 'atm_id']
+
+ 
+
+                yhat = model.predict(data_test[:])
+
+ 
+
+                result['PREDICTED_WITHDRAWAL']= yhat.astype(int)
+
+                result['atm_id'] = atm_id
+
+ 
+
+                print('----------------')
+
+ 
+
+                FINAL_RESULT = FINAL_RESULT.append(result)
+
+ 
+
+#                     logger.info('{} - {}'.format(index, "Processed atm id: " + str(atm_id)+' number '+str(i) + " for " + str(dates[j])) )
+
+#                     index = index+1
+
+ 
+
+                #FINAL_PARAM = FINAL_PARAM.append(params)
+
+            PRED_RESULT = PRED_RESULT.append(FINAL_RESULT)
+
+ 
+
+            print('-------------DAY FINISHED ----------------')
+
+ 
+
+        merge_list=list(zip(test_fault,test_fault_dt))
+
+ 
+
+        df = pd.DataFrame(merge_list,columns = ['atm_id','date'])
+
+        PRED_RESULT.loc[PRED_RESULT.PREDICTED_WITHDRAWAL < 0,'PREDICTED_WITHDRAWAL'] = 100000
+
+        PRED_RESULT.drop_duplicates(inplace = True)
+
+ 
+
+        endTime1 = datetime.now()
+
+        delta = endTime1 - startTime1
+
+        print('\n************************ DELTA : '+str(delta)+' ************************')
+
+#             logger.info('Elastic Net execution time : '+str(delta))
+
+        PRED_RESULT.drop_duplicates(inplace = True)
+
+ 
+
+        # Margins
+
+ 
+
+        startTime2 = datetime.now()
+
+ 
+
+        # Margin table
+
+        margin = '''select atm_id as atm_id, margin_applied from {}.{} where atm_id in (select atm_id from {}.{}) order by atm_id,"date" desc'''.format(schema_TD,margins_TD ,schema_TD,atm_list_TD)
+
+ 
+
+        # Business Margin table
+
+        bus_margin = '''select cast(b.atm_id as int) as atm_id, a.margin_applied AS BUS_MARGIN_APPLIED from {}.{} a inner join dp_admt.uc_csh_opt_atm_master b on a.atm_id = b.displayid where clndr_day = {} and a.atm_id in (select displayid from {}.{}) order by a.atm_id, clndr_day  desc'''.format(schema_SBX,bus_margins_TD , current_date_day,schema_TD,atm_list_TD)
+
+        inner = pd.DataFrame()
+
+       
+
+        try:
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                margin = pd.read_sql(margin,conn)
+
+                bus_margin = pd.read_sql(bus_margin,conn)
+
+            margin.drop_duplicates(subset = ['atm_id'],inplace = True, keep = 'first')
+
+            margin=margin.reset_index(drop = True)
+
+ 
+
+            margin = margin[['atm_id','MARGIN_APPLIED']]
+
+ 
+
+           bus_margin.drop_duplicates(subset = ['atm_id'],inplace = True)
+
+            bus_margin=bus_margin.reset_index(drop = True)
+
+            bus_margin = bus_margin[['atm_id','BUS_MARGIN_APPLIED']]
+
+            inner_ = pd.DataFrame.merge(PRED_RESULT,margin, left_on = 'atm_id', right_on = 'atm_id',how = 'left')
+
+            inner_.drop_duplicates(inplace = True)
+
+            inner_=inner_.reset_index(drop = True)
+
+            inner_.fillna(0,inplace = True)
+
+           
+
+            inner = pd.DataFrame.merge(inner_,bus_margin, left_on = 'atm_id', right_on = 'atm_id',how = 'left')  
+
+ 
+
+            inner.fillna(0,inplace = True)
+
+ 
+
+            inner['margin_withdrawal'] = 0
+
+ 
+
+            inner.drop_duplicates(inplace = True)
+
+            inner=inner.reset_index(drop = True)
+
+ 
+
+            inner.fillna(0,inplace = True)
+
+ 
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Successfully read data from " + schema_TD +'.'+ margins_TD) )
+
+#                 index = index+1
+
+        except Exception as e:
+
+            print(e)
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Failed to read data from " + schema_TD +'.'+ margins_TD) )
+
+#                 index = index+1
+
+ 
+
+ 
+
+        for i in range(len(inner)):
+
+            #print(i)
+
+            if inner['MARGIN_APPLIED'][i] == 0:
+
+                inner['margin_withdrawal'][i] = inner['PREDICTED_WITHDRAWAL'][i] + inner['BUS_MARGIN_APPLIED'][i]
+
+            elif inner['MARGIN_APPLIED'][i] > 0:
+
+                inner['margin_withdrawal'][i] = inner['PREDICTED_WITHDRAWAL'][i] + ((inner['PREDICTED_WITHDRAWAL'][i]*(inner['MARGIN_APPLIED'][i]/100))) + inner['BUS_MARGIN_APPLIED'][i]
+
+            elif inner['MARGIN_APPLIED'][i] < 0:
+
+                inner['margin_withdrawal'][i] = inner['PREDICTED_WITHDRAWAL'][i] + ((inner['PREDICTED_WITHDRAWAL'][i]*(inner['MARGIN_APPLIED'][i]/100))) + inner['BUS_MARGIN_APPLIED'][i]
+
+                inner['MARGIN_APPLIED'][i] = inner['MARGIN_APPLIED'][i]
+
+        print('done margins')
+
+ 
+
+        endTime2 = datetime.now()
+
+        delta = endTime2 - startTime2
+
+        print('\n************************ DELTA : '+str(delta)+' ************************')
+
+#             logger.info('Margins execution time : '+str(delta))
+
+        # Replenishment
+
+ 
+
+        startTime3 = datetime.strptime(datetime.now().strftime("%H:%M:%S"),'%H:%M:%S') #To find Delta (EndTime - StartTime
+
+ 
+
+        inner.drop_duplicates(inplace = True)
+
+        inner=inner.reset_index(drop = True)
+
+ 
+
+        #inner=inner.loc[inner['atm_id']== 616] ##hereee
+
+        try:
+
+            # Act rep table
+
+            rep = '''select b.atm_id,a.txn_date,a.net_amt from {}.{} a
+
+            inner join {}.{} b on a.atm_id = b.displayid
+
+            where cast(b.atm_id as int) in (select atm_id from {}.{})'''.format(schema_TD,rep_TD ,schema_TD,atm_master_TD  ,schema_TD,atm_list_TD)
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                rep = pd.read_sql(rep,conn)
+
+            rep['atm_id'] = rep['atm_id'].astype(int)
+
+            rep.drop_duplicates(subset = ['atm_id'],inplace = True)
+
+            rep=rep.reset_index(drop = True)
+
+ 
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Successfully read data from " + schema_TD +'.'+ rep_TD + " and " + atm_master_TD) )
+
+#                 index = index+1
+
+        except Exception as e:
+
+            print(e)
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Failed to read data from " + schema_TD +'.'+ rep_TD + " and " + atm_master_TD) )
+
+#                 index = index+1
+
+ 
+
+        try:
+
+            # Act closing bal table
+
+ 
+
+ 
+
+            close_bal = '''select b.atm_id,a.txn_date, CASE WHEN  a.closing_bal_gl < 0 THEN a.closing_bal ELSE a.closing_bal_gl END AS closing_bal from {}.{} a
+
+            inner join {}.{} b on a.atm_id = b.displayid
+
+            where cast(b.atm_id as int) in (select atm_id from {}.{})'''.format(schema_TD,close_bal_TD,schema_TD,atm_master_TD,schema_TD,atm_list_TD)
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                close_bal = pd.read_sql(close_bal,conn)
+
+            close_bal['atm_id'] = close_bal['atm_id'].astype(int)
+
+            #close_bal.drop_duplicates(subset = ['atm_id'],inplace = True)
+
+            close_bal=close_bal.reset_index(drop = True)
+
+ 
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Successfully read data from " + schema_TD +'.'+ close_bal_TD) )
+
+#                 index = index+1
+
+        except Exception as e:
+
+            print(e)        
+
+#                 logger.info('{} - {}'.format(index, "Failed to read data from " + schema_TD +'.'+ close_bal_TD) )
+
+#                 index = index+1
+
+ 
+
+        try:
+
+            parameters = '''select atm_id,offsite,replanishment_cost,cit_trip_cost,idle_cash_cost_ratio,date_effective from {}.{}
+
+            where cast(atm_id as int) in (select atm_id from {}.{})
+
+            order by atm_id,date_effective desc'''.format(schema_TD,atm_detail_TD ,schema_TD,atm_list_TD)
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                parameters = pd.read_sql(parameters,conn)
+
+            parameters.drop_duplicates(subset = ['atm_id'],inplace = True)
+
+            parameters=parameters.reset_index(drop = True)
+
+            parameters['atm_id'] = parameters['atm_id'].astype(int)
+
+ 
+
+#             logger.info('{} - {}'.format(index, "Successfully read data from " + schema_TD +'.'+ atm_detail_TD) )
+
+#             index = index+1
+
+ 
+
+            limit = '''select atm_id,minimum_limit,maximum_limit,date_effective from {}.{}
+
+            where atm_id in (select atm_id from {}.{})
+
+            order by atm_id,date_effective desc'''.format(schema_TD,limit_TD ,schema_TD,atm_list_TD)
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                limit = pd.read_sql(limit,conn)
+
+            limit.drop_duplicates(subset = ['ATM_ID'],inplace = True)
+
+            limit=limit.reset_index(drop = True)
+
+            limit['ATM_ID'] = limit['ATM_ID'].astype(int)
+
+ 
+
+            rep['txn_date']=pd.to_datetime(rep['txn_date'])
+
+            close_bal['txn_date']=pd.to_datetime(close_bal['txn_date'])
+
+ 
+
+            final = pd.DataFrame()
+
+ 
+
+            uni_atm =pd.DataFrame(pd.unique(inner['atm_id']))
+
+ 
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Successfully read data from " + schema_TD +'.'+ limit_TD) )
+
+#                 index = index+1
+
+        except Exception as e:
+
+            print(e)          
+
+#                 logger.info('{} - {}'.format(index, "Failed to read data from " + schema_TD +'.'+ limit_TD + " - " + atm_detail_TD) )
+
+#                 index = index+1
+
+ 
+
+        for i in range(len(uni_atm)):
+
+        #for i in range(10,11):
+
+#         for i in range(5):  #change here
+
+            atm_data_raw = pd.DataFrame.merge(uni_atm[i:i+1],inner, left_on = 0, right_on = 'atm_id',how = 'inner')
+
+            minus1 = atm_data_raw['txn_date'][0] - timedelta(1)
+
+            minus2 = atm_data_raw['txn_date'][0] - timedelta(2)
+
+            minus3 = atm_data_raw['txn_date'][0] - timedelta(3)
+
+            if close_bal.loc[(close_bal['atm_id']== atm_id) & (close_bal['txn_date'] == minus1)].shape[0] == 0:
+
+                if close_bal.loc[(close_bal['atm_id']== atm_id) & (close_bal['txn_date'] == minus2)].shape[0] == 0:
+
+                    if close_bal.loc[(close_bal['atm_id']== atm_id) & (close_bal['txn_date'] == minus3)].shape[0] == 0:
+
+ 
+
+                        close = minus1
+
+                        print(i)
+
+                        print('minus1')
+
+                        print('no')
+
+ 
+
+                    else:
+
+                        close = minus3
+
+                        print(i)
+
+                        print('minus3')
+
+                else:
+
+                    close = minus2
+
+                    print(i)
+
+                    print('minus2')
+
+            else:
+
+                close = minus1
+
+                print(i)
+
+                print('minus1')
+
+ 
+
+ 
+
+ 
+
+ 
+
+            date_minus1 = pd.DataFrame([[close,atm_data_raw['atm_id'][0]]], columns = ["txn_date","atm_id"])
+
+            prep = pd.DataFrame.merge(atm_data_raw,date_minus1, left_on = ['atm_id','txn_date'], right_on = ['atm_id','txn_date'],how = 'outer')
+
+            prep.sort_values('txn_date',inplace = True)
+
+            working = pd.DataFrame.merge(prep,close_bal, left_on = ['atm_id','txn_date'], right_on = ['atm_id','txn_date'],how = 'left')
+
+            working['repl']= 0
+
+            working['closing_p']=0
+
+            working['closing_a'] = 0
+
+            working['total_cost']=0
+
+            working['opening_bal'] =0
+
+            working['force']= 0
+
+            working['Cost_of_Idle_Cash']=0
+
+            minimum_limit=limit.loc[limit['ATM_ID']==working['atm_id'][0]]['MINIMUM_LIMIT'].reset_index(drop = True)[0] if (limit.loc[limit['ATM_ID']==working['atm_id'][0]]['MINIMUM_LIMIT'].reset_index(drop = True).shape[0]) >0 else 434006
+
+            #minimum_limit = limit.loc[limit['ATM_ID']==working['atm_id'][0]]['MINIMUM_LIMIT'].reset_index(drop = True)[0]
+
+            maximum_limit = limit.loc[limit['ATM_ID']==working['atm_id'][0]]['MAXIMUM_LIMIT'].reset_index(drop = True)[0] if (limit.loc[limit['ATM_ID']==working['atm_id'][0]]['MAXIMUM_LIMIT'].reset_index(drop = True).shape[0]) > 0 else 24000000
+
+            #rep_cost = param.loc[param['atm_id']==working['atm_id'][0]]['replanishment_cost'].reset_index(drop = True)[0] if
+
+ 
+
+            rep_cost = parameters.loc[parameters['atm_id']==working['atm_id'][0]]['replanishment_cost'].reset_index(drop = True)[0] if (parameters.loc[parameters['atm_id']==working['atm_id'][0]]['replanishment_cost'].reset_index(drop = True).shape[0]) > 0 else 500
+
+            cit_trip_cost = parameters.loc[parameters['atm_id']==working['atm_id'][0]]['cit_trip_cost'].reset_index(drop = True)[0] if (parameters.loc[parameters['atm_id']==working['atm_id'][0]]['cit_trip_cost'].reset_index(drop = True).shape[0]) > 0 else 500
+
+            rep_cost = rep_cost + cit_trip_cost
+
+            idlecash = parameters.loc[parameters['atm_id']==working['atm_id'][0]]['idle_cash_cost_ratio'].reset_index(drop = True)[0] if (parameters.loc[parameters['atm_id']==working['atm_id'][0]]['idle_cash_cost_ratio'].reset_index(drop = True).shape[0]) > 0 else 7.25
+
+            idlecash = idlecash/100
+
+            offsite = parameters.loc[parameters['atm_id']==working['atm_id'][0]]['offsite'].reset_index(drop = True)[0] if (parameters.loc[parameters['atm_id']==working['atm_id'][0]]['offsite'].reset_index(drop = True).shape[0]) > 0 else 0
+
+ 
+
+ 
+
+            working.fillna(0,inplace= True)
+
+            working['PREDICTION_DAY'] = ''
+
+ 
+
+            #replenishement
+
+            for i in range(len(working)-1):
+
+ 
+
+                if working['closing_bal'][i] < working['margin_withdrawal'][i+1] + minimum_limit:
+
+                    #print('true')
+
+                    working['repl'][i+1]= abs(working['closing_bal'][i]-working['margin_withdrawal'][i+1]) + minimum_limit
+
+ 
+
+                working['opening_bal'][i+1]= working['closing_bal'][i]
+
+                working['closing_bal'][i+1] = working['closing_bal'][i] - working['margin_withdrawal'][i+1] + working['repl'][i+1]
+
+                #working['closing_a'][i+1] = working['closing_bal'][i] - working['total_amt'][i+1] + working['repl'][i+1]
+
+                working['Cost_of_Idle_Cash'][i+1] = (working['closing_bal'][i+1]*idlecash)/365
+
+                working['Cost_of_Idle_Cash'][i+1] = (round(working['Cost_of_Idle_Cash'][i+1],2))
+
+                if working['repl'][i+1] > 0:
+
+                    working['total_cost'][i+1] = working['Cost_of_Idle_Cash'][i+1]+rep_cost
+
+                else:
+
+                     working['total_cost'][i+1] = working['Cost_of_Idle_Cash'][i+1]
+
+                if working['repl'][i+1] > maximum_limit:
+
+                    working['force'][i+1] = 1
+
+                working['txn_date'][0] = current_minus_one
+
+            for i in range(len(working)):
+
+                working['PREDICTION_DAY'][i] = i
+
+ 
+
+            final= final.append(working)
+
+        print('done cplex')
+
+ 
+
+        endTime3 = datetime.now()
+
+        delta = endTime3 - startTime3
+
+        print('\n************************ DELTA : '+str(delta)+' ************************')
+
+ 
+
+        final  = final.rename({ 'margin_applied': 'MARGIN_APPLIED','atm_id' : 'ATM_ID', 'txn_date' : 'PREDICTION_DATE', 'PREDICTED_WITHDRAWAL' : 'PREDICTED_WITHDRAWAL', 'margin_withdrawal' : 'MARGIN_WITHDRAWAL', 'closing_bal' : 'CLOSING_BALANCE', 'repl' : 'REPLENISHMENT', 'closing_p' : 'CLOSING_BALANCE_PRESC', 'total_cost' : 'TOTAL_COST', 'opening_bal' : 'OPENING_BALANCE', 'force' : 'FORCE', 'Cost_of_Idle_Cash' : 'COST_OF_IDLE_CASH','PREDICTION_DAY' : 'PREDICTION_DAY'},axis=1)
+
+        final = final.reset_index(drop = True)
+
+ 
+
+        final['WEEK_DAY'] = ''
+
+        for i in range(len(final)):
+
+            # final['WEEK_DAY'][i] = pd.Timestamp(final['PREDICTION_DATE'][i]).weekday_name ## ERROR IN CONVERSION
+
+            final['WEEK_DAY'][i] = pd.Timestamp(final['PREDICTION_DATE'][i]).day_name()
+
+ 
+
+        final['FIRST_DAY'] = 0
+
+ 
+
+        final.drop(final.loc[final['PREDICTION_DATE']== current_minus_one].index,inplace = True)
+
+ 
+
+        final.loc[final['PREDICTION_DATE']==str(current_date)[:10],'FIRST_DAY'] = 1
+
+ 
+
+        final['PROCESSING_DATE'] = str(current_date)[:10]
+
+ 
+
+        final['BATCH_NO'] = batch_no
+
+        final['BATCH_NO_PROP'] = batch_no
+
+ 
+
+        final_new = final[["PROCESSING_DATE", "BATCH_NO", "ATM_ID","PREDICTION_DATE", "PREDICTION_DAY", "WEEK_DAY", "OPENING_BALANCE","PREDICTED_WITHDRAWAL","REPLENISHMENT","MARGIN_WITHDRAWAL","CLOSING_BALANCE", "COST_OF_IDLE_CASH","TOTAL_COST","FORCE","MARGIN_APPLIED","BATCH_NO_PROP"]]
+
+ 
+
+        final_new['MODE'] = mode
+
+        final_new['DATE_ENTERED'] = datetime.now()
+
+ 
+
+        final_new =final_new.reset_index(drop = True)
+
+ 
+
+        try:
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                with conn.cursor() as cur:
+
+                    cur.executemany("insert into "+schema_TD+"."+final_result_TD+" (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",final_new.values.tolist())
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Inserted data into " + schema_TD +'.'+ final_result_TD) )
+
+#                 index = index+1
+
+ 
+
+            # print(final_new.values.tolist())
+
+            endTime = datetime.now()
+
+            delta = endTime - startTime1
+
+            print('\n************************ DELTA : '+str(delta)+' ************************')
+
+ 
+
+            logs = pd.DataFrame()
+
+            logs['DATE'] = [current_date]
+
+            logs['ATM_CNT']= [len(uni_atm)]
+
+            logs['START_TIME'] = startTime1
+
+            logs['END_TIME'] = endTime
+
+            logs['EXPECTED_ROWS'] = [len(uni_atm)*7]
+
+            logs['ROWS_INSERTED']=[len(final_new)]
+
+            logs['APPLICATION'] = ['PRED/PROP']
+
+ 
+
+            print('insert in ' + schema_TD+"."+logs_TD)
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                with conn.cursor() as cur:
+
+                    cur.executemany("insert into "+schema_TD+"."+logs_TD+" (?,?,?,?,?,?,?)",logs.values.tolist())
+
+ 
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Inserted data into " + schema_TD +'.'+ logs_TD) )
+
+#                 index = index+1
+
+ 
+
+ 
+
+            BI1 = pd.DataFrame()
+
+            BI1['USE_CASE']= ['PREDICTIVE']
+
+            BI1['BATCH_NO'] =[batch_no]
+
+            BI1['CURRENT_DATE'] =[current_date]
+
+            BI1['END_DATE'] = [current_date + timedelta(6)]
+
+            BI1['CURRENT_TIME']= [datetime.now()]
+
+            BI1['BATCH_NO_1'] = [batch_no]
+
+ 
+
+ 
+
+            BI2 = pd.DataFrame()
+
+            BI2['USE_CASE']= ['PRESCRIPTIVE']
+
+            BI2['BATCH_NO'] =[batch_no]
+
+            BI2['CURRENT_DATE'] =[current_date]
+
+            BI2['END_DATE'] = [current_date + timedelta(6)]
+
+            BI2['CURRENT_TIME']= [datetime.now()]
+
+            BI2['BATCH_NO_1'] = [batch_no]
+
+ 
+
+            #     print('insert into '+schema_TD+"."+bi1_TD)
+
+            #     print('insert into '+schema_TD+"."+bi1_TD)
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                with conn.cursor() as cur:
+
+                    cur.executemany("insert into "+schema_TD+"."+bi1_TD+" (?,?,?,?,?,?)",BI1.values.tolist())
+
+ 
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Inserted BI1 data into " + schema_TD +'.'+ bi1_TD) )
+
+#                 index = index+1
+
+ 
+
+ 
+
+            with teradatasql.connect(host = host, user=username, password=password) as conn:
+
+                with conn.cursor() as cur:
+
+                    cur.executemany("insert into "+schema_TD+"."+bi1_TD+" (?,?,?,?,?,?)",BI2.values.tolist())
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Inserted BI2 data into " + schema_TD +'.'+ bi1_TD) )
+
+#                 index = index+1
+
+        except Exception as e:
+
+            print(e)
+
+ 
+
+#                 logger.info('{} - {}'.format(index, "Failed to Insert data to TD") )
+
+#                 index = index+1
+
+    except Exception as e:
+
+        print(e)
+
+ 
+
+#         logger.info('{} - {}'.format(index, "WF_DLY_DW_SDM_DS_ATM_CSH_OPT Failed") )
+
+#         index = index+1
+
+   
+
+    
+
+    
+
+process_atms_op = create_component_from_func(process_atms, base_image='pkplpadsm01.ubl.com.pk:30500/ubl-dat-fdn/atm-csh-opt:1.0')
+
+ 
+
+ 
+
+@func_to_container_op
+
+def dont_process_atms(exception):
+
+    print('Cannot Process ATMs...', exception)
+
+ 
+
+@dsl.pipeline(
+
+name="ATM Cash Optimization Pipeline",
+
+description = "ATM Cash Optimization Daily Execution"
+
+)
+
+def atm_pipeline():
+
+   
+
+    local_base_path = '/home/jovyan/data'
+
+    pipeline_volume = dsl.PipelineVolume(pvc="vol-data-atm-csh-opt-prod")
+
+   
+
+    check = is_eligible_to_execute_op(local_base_path)
+
+    check.execution_options.caching_strategy.max_cache_staleness = "P0D"
+
+    check.add_pvolumes({local_base_path: pipeline_volume})
+
+   
+
+    with dsl.Condition(check.output == 1, name='Prior-data-exist-AND-not-processed'):
+
+        print("process atms")
+
+        process = process_atms_op(local_base_path).set_cpu_request('6').set_cpu_limit('6').set_memory_request('3G').set_memory_limit('3G')
+
+       process.execution_options.caching_strategy.max_cache_staleness = "P0D"
+
+        process.add_pvolumes({local_base_path: pipeline_volume})
+
+    with dsl.Condition(check.output != 1, name='Prior-data-does-not-exist-OR-already-processed'):
+
+        print("dont process")
+
+        dont_process_atms(check.output)
+
+       
+
+if __name__ == '__main__':
+
+    # Compiling the pipeline
+
+    kfp.compiler.Compiler().compile(atm_pipeline, 'piplne_atm_csh_opt_dly_prod_bus_margin_v2.yaml')
